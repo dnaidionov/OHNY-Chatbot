@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+env/
+.env
+
+# Node
+node_modules/
+dist/
+
+# Data / caches
+vector_store.pkl
+synthetic_events.json
+*.sqlite
+.DS_Store

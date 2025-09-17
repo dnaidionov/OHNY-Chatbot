@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
 
 BOROUGHS = ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
 TAGS = ["architecture", "history", "family-friendly", "guided", "tour", "exhibit", "outdoor"]
@@ -98,18 +99,78 @@ def build_vector_store(events):
         print("OPENAI_API_KEY not set: skipping vector store build. You can still use the fallback keyword retriever.")
         return
     try:
-        from langchain.embeddings import OpenAIEmbeddings
-        from langchain.vectorstores import FAISS
+        # Try the most common langchain import paths first, then fall back to alternatives
+        try:
+            from langchain.embeddings import OpenAIEmbeddings
+        except Exception:
+            # older/newer packaging might expose this differently
+            from langchain_openai import OpenAIEmbeddings
+
+        try:
+            from langchain.vectorstores import FAISS
+        except Exception:
+            from langchain_community.vectorstores import FAISS
     except Exception as e:
         print("Failed to import langchain/faiss:", e)
         return
     texts = [e["title"] + ": " + e["description"] for e in events]
     metadatas = [{"id": e["id"], "borough": e["borough"], "neighborhood": e["neighborhood"], "start": e["start_iso"], "end": e["end_iso"]} for e in events]
-    embeddings = OpenAIEmbeddings()
-    vectorstore = FAISS.from_texts(texts, embeddings, metadatas=metadatas)
-    with open("vector_store.pkl", "wb") as f:
-        pickle.dump(vectorstore, f)
-    print("vector_store.pkl written (FAISS)")
+    try:
+        # Instantiate embeddings with configurable model name. Different langchain wrappers
+        # accept different parameter names across versions (model or model_name), so try both.
+        try:
+            embeddings = OpenAIEmbeddings(model=OPENAI_EMBEDDING_MODEL)
+        except TypeError:
+            embeddings = OpenAIEmbeddings(model_name=OPENAI_EMBEDDING_MODEL)
+
+        vectorstore = FAISS.from_texts(texts, embeddings, metadatas=metadatas)
+        # Prefer LangChain's provided persistence API when available
+        try:
+            if hasattr(vectorstore, "save_local"):
+                # LangChain v0.2+ usually exposes save_local
+                vectorstore.save_local("vector_store")
+                print("vector_store saved to directory 'vector_store' via LangChain.save_local()")
+            elif hasattr(vectorstore, "save"):
+                vectorstore.save("vector_store")
+                print("vector_store saved to 'vector_store' via LangChain.save()")
+            else:
+                # Fallback: try FAISS native index write + metadata
+                try:
+                    import faiss
+                    # attempt to locate the underlying FAISS index
+                    faiss_index = getattr(vectorstore, "index", None) or getattr(vectorstore, "_index", None) or getattr(vectorstore, "faiss_index", None)
+                    if faiss_index is not None:
+                        faiss.write_index(faiss_index, "vector_store.index")
+                        # save texts/metadatas for reconstruction
+                        with open("vector_store_metadata.json", "w") as mf:
+                            json.dump({"texts": texts, "metadatas": metadatas}, mf)
+                        print("vector_store.index and vector_store_metadata.json written (FAISS native)")
+                    else:
+                        # Last resort: pickle (may fail for some wrappers)
+                        with open("vector_store.pkl", "wb") as f:
+                            pickle.dump(vectorstore, f)
+                        print("vector_store.pkl written (pickle fallback)")
+                except Exception as e:
+                    print("Failed to persist vectorstore using FAISS native APIs:", e)
+                    # Attempt pickle as a final fallback
+                    try:
+                        with open("vector_store.pkl", "wb") as f:
+                            pickle.dump(vectorstore, f)
+                        print("vector_store.pkl written (pickle fallback)")
+                    except Exception as e2:
+                        print("Failed to pickle vectorstore as final fallback:", e2)
+        except Exception as e:
+            print("Failed to save vectorstore via LangChain API:", e)
+    except Exception as e:
+        # If building the vector store fails, print a helpful message but don't crash the whole script
+        print("Failed to build FAISS vector store:", e)
+        # Provide more specific guidance for OpenAI errors
+        if hasattr(e, 'args') and e.args:
+            msg = str(e.args[0])
+            if 'does not have access to model' in msg or 'model_not_found' in msg or '403' in msg:
+                print("OpenAI returned a model access error. Check OPENAI_API_KEY and the embedding model name.")
+                print(f"Current embedding model: {OPENAI_EMBEDDING_MODEL}")
+        print("You can still use the generated JSON output without vector embeddings.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
