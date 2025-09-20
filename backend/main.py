@@ -1,11 +1,12 @@
 from fastapi import FastAPI, Query
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
-import os, pickle, json
+import os, pickle, json, functools, time
 from datetime import datetime
 from dateutil import parser as dateparser
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
+from pathlib import Path
 
 load_dotenv()
 
@@ -47,6 +48,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@functools.lru_cache(maxsize=1)
+def _load_prompt(mtime, type):
+    return Path("prompts/"+type+".txt").read_text().strip()
+
+def get_system_prompt():
+    """Reloads the system prompt whenever system.txt is modified."""
+    mtime = os.path.getmtime("prompts/system.txt")
+    return _load_prompt(mtime, "system") + "\n\n" + _load_prompt(mtime, "style")
 
 class MessageRequest(BaseModel):
     session_id: str
@@ -123,7 +133,7 @@ def chat(msg: MessageRequest, start_time: Optional[str] = Query(None), end_time:
     if USE_OPENAI:
         # Build a simple prompt including top docs
         snippets = "\n".join([d.page_content for d in docs[:5]])
-        system = "You are OHNY Assistant. Use the provided event snippets to answer user questions. Keep answers short and include 1-3 suggested events with title, time, and signup link if available."
+        system = get_system_prompt()
         user_prompt = f"User: {msg.message}\n\nEvent snippets:\n{snippets}"
     else:
         user_prompt = None
