@@ -102,8 +102,9 @@ def filter_events_by_time(docs, start_time: Optional[datetime] = None, end_time:
 USE_OPENAI = bool(OPENAI_API_KEY)
 if USE_OPENAI:
     try:
-        import openai
-        openai.api_key = OPENAI_API_KEY
+        from openai import OpenAI
+        
+        client = OpenAI(api_key=OPENAI_API_KEY)
         print("OpenAI key loaded")
     except Exception as e:
         print("Failed to import openai:", e)
@@ -140,12 +141,10 @@ def chat(msg: MessageRequest, start_time: Optional[str] = Query(None), end_time:
 
     if USE_OPENAI and user_prompt is not None:
         try:
-            res = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
-                messages=[{"role":"system","content":system},{"role":"user","content":user_prompt}],
-                max_tokens=400,
-            )
-            answer = res["choices"][0]["message"]["content"]
+            res = client.chat.completions.create(model="gpt-4o-mini",
+            messages=[{"role":"system","content":system},{"role":"user","content":user_prompt}],
+            max_tokens=400)
+            answer = res.choices[0].message.content
         except Exception as e:
             print("OpenAI call failed:", e)
             answer = "Here are some events I found:\n" + "\n".join([d.page_content for d in docs[:3]])
