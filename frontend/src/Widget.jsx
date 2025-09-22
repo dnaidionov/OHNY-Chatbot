@@ -56,14 +56,19 @@ export default function Widget() {
         ))}
       </div>
       <div style={{padding:10, borderTop:'1px solid #eee'}}>
-        <input type="text" placeholder="Ask a question..." value={input} onChange={e=>setInput(e.target.value)} style={{width:'100%', padding:8, marginBottom:8, boxSizing:'border-box'}} />
-        <div style={{display:'flex', gap:8, marginBottom:8}}>
-          <input type="datetime-local" value={startTime} onChange={e=>setStartTime(e.target.value)} style={{flex:1, padding:8}} />
-          <input type="datetime-local" value={endTime} onChange={e=>setEndTime(e.target.value)} style={{flex:1, padding:8}} />
-        </div>
-        <div style={{display:'flex', gap:6, marginBottom:8}}>
-          {presets.map((p,i)=> (<button key={i} onClick={()=>applyPreset(p)} style={{padding:'6px 8px', background:'#eee', borderRadius:6}}>{p.label}</button>))}
-        </div>
+        <input
+          type="text"
+          placeholder="Ask a question..."
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+              e.preventDefault();
+              sendMessage();
+            }
+          }}
+          style={{width:'100%', padding:8, marginBottom:8, boxSizing:'border-box'}}
+        />
         <div style={{display:'flex', gap:8}}>
           <button onClick={sendMessage} disabled={loading} style={{flex:1, padding:10, background:'#0b5fff', color:'#fff', borderRadius:8}}>{loading? 'Thinking...':'Send'}</button>
         </div>
