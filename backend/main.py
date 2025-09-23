@@ -12,6 +12,14 @@ load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+STYLE_MAP = {
+    "concierge": "prompts/style_concierge.txt",
+    "tourguide": "prompts/style_tourguide.txt",
+    "family": "prompts/style_family.txt",
+    "friendly": "prompts/style_friendly.txt",
+    "default": "prompts/style.txt",
+}
+
 # Try to load vectorstore; if missing, fall back to keyword retriever over synthetic_events.json
 VECTOR_PATH = "vector_store.pkl"
 vectorstore = None
@@ -50,8 +58,13 @@ app.add_middleware(
 )
 
 @functools.lru_cache(maxsize=1)
-def _load_prompt(mtime, type):
-    return Path("prompts/"+type+".txt").read_text().strip()
+def _load_prompt(file_path: str, mtime: float):
+    return Path(file_path).read_text().strip()
+
+def get_prompt(file_path: str):
+    """Reloads a prompt file whenever it changes."""
+    mtime = os.path.getmtime(file_path)
+    return _load_prompt(file_path, mtime)
 
 def get_system_prompt():
     """Reloads the system prompt whenever system.txt is modified."""
@@ -110,10 +123,12 @@ if USE_OPENAI:
         print("Failed to import openai:", e)
         USE_OPENAI = False
 
+# def chat(msg: MessageRequest, start_time: Optional[str] = Query(None), end_time: Optional[str] = Query(None)):
+#     start_dt = dateparser.parse(start_time) if start_time else None
+#     end_dt = dateparser.parse(end_time) if end_time else None
+
 @app.post("/v1/message", response_model=MessageResponse)
-def chat(msg: MessageRequest, start_time: Optional[str] = Query(None), end_time: Optional[str] = Query(None)):
-    start_dt = dateparser.parse(start_time) if start_time else None
-    end_dt = dateparser.parse(end_time) if end_time else None
+def chat(msg: MessageRequest, style: str = Query("default")):
 
     # Retrieve docs
     docs = None
@@ -127,23 +142,37 @@ def chat(msg: MessageRequest, start_time: Optional[str] = Query(None), end_time:
     else:
         docs = naive_retriever(msg.message)
 
-    docs = filter_events_by_time(docs, start_dt, end_dt)
     context = [d.metadata for d in docs]
 
     # Compose response
     if USE_OPENAI:
         # Build a simple prompt including top docs
         snippets = "\n".join([d.page_content for d in docs[:5]])
-        system = get_system_prompt()
         user_prompt = f"User: {msg.message}\n\nEvent snippets:\n{snippets}"
     else:
         user_prompt = None
 
     if USE_OPENAI and user_prompt is not None:
         try:
-            res = client.chat.completions.create(model="gpt-4o-mini",
-            messages=[{"role":"system","content":system},{"role":"user","content":user_prompt}],
-            max_tokens=400)
+            style_file = STYLE_MAP.get(style, STYLE_MAP["concierge"])
+            system_prompt = get_prompt("prompts/system.txt")
+            style_prompt = get_prompt(style_file)
+            fallback_prompt = get_prompt("prompts/fallback.txt")
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": f"{system_prompt}\n\n{style_prompt}\n\n{fallback_prompt}"
+                },
+                {"role": "user", "content": user_prompt},
+            ]
+
+            # model="gpt-4o-mini"
+            model="gpt-5-mini"
+            res = client.chat.completions.create(model=model,
+                messages=messages,
+                # max_tokens=400)
+                max_completion_tokens=400)
             answer = res.choices[0].message.content
         except Exception as e:
             print("OpenAI call failed:", e)

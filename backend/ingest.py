@@ -13,8 +13,28 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
 
+
 BOROUGHS = ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
 TAGS = ["architecture", "history", "family-friendly", "guided", "tour", "exhibit", "outdoor"]
+
+# Real neighborhoods for each borough (not exhaustive, but representative)
+NEIGHBORHOODS = {
+    "Manhattan": [
+        "Harlem", "Upper East Side", "Upper West Side", "Chelsea", "Greenwich Village", "SoHo", "Tribeca", "Lower East Side", "East Village", "Chinatown", "Financial District", "Midtown", "Morningside Heights", "Washington Heights"
+    ],
+    "Brooklyn": [
+        "Williamsburg", "Brooklyn Heights", "Park Slope", "Bushwick", "Bedford-Stuyvesant", "DUMBO", "Crown Heights", "Red Hook", "Greenpoint", "Flatbush", "Sunset Park", "Prospect Heights", "Fort Greene"
+    ],
+    "Queens": [
+        "Astoria", "Long Island City", "Flushing", "Forest Hills", "Jackson Heights", "Sunnyside", "Jamaica", "Ridgewood", "Corona", "Rego Park", "Woodside", "Elmhurst"
+    ],
+    "Bronx": [
+        "Riverdale", "Fordham", "Kingsbridge", "Mott Haven", "Pelham Bay", "South Bronx", "Throgs Neck", "Belmont", "Morris Park"
+    ],
+    "Staten Island": [
+        "St. George", "Tottenville", "Great Kills", "New Dorp", "Port Richmond", "Stapleton", "West Brighton", "Tompkinsville"
+    ]
+}
 
 def generate_synthetic_events(n=200):
     base_date = datetime(2025, 10, 4, 9, 0)
@@ -22,14 +42,16 @@ def generate_synthetic_events(n=200):
     for i in range(n):
         start = base_date + timedelta(hours=random.randint(0, 48))
         end = start + timedelta(hours=2)
+        borough = random.choice(BOROUGHS)
+        neighborhood = random.choice(NEIGHBORHOODS[borough])
         event = {
             "id": f"event_{i:04}",
-            "title": f"Event {i} at {random.choice(BOROUGHS)}",
+            "title": f"Event {i} at {borough}",
             "description": f"Synthetic description for event {i}. This is a sample event for testing the OHNY Weekend chatbot.",
             "start_iso": start.isoformat(),
             "end_iso": end.isoformat(),
-            "borough": random.choice(BOROUGHS),
-            "neighborhood": f"Neighborhood {random.randint(1,20)}",
+            "borough": borough,
+            "neighborhood": neighborhood,
             "address": f"{random.randint(1,500)} Example St",
             "tags": random.sample(TAGS, k=random.randint(1,3)),
             "kid_friendly": random.choice([True, False]),
