@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Query
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
-import os, pickle, json, functools, time
+import os, pickle, json, functools, time, logging
 from datetime import datetime
 from dateutil import parser as dateparser
 from dotenv import load_dotenv
@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 
 load_dotenv()
+logging.basicConfig(level=logging.DEBUG)  # Set to DEBUG level
+
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -21,20 +23,39 @@ STYLE_MAP = {
 }
 
 # Try to load vectorstore; if missing, fall back to keyword retriever over synthetic_events.json
-VECTOR_PATH = "vector_store.pkl"
+VECTOR_PATH = "vector_store/index.pkl"
 vectorstore = None
 if os.path.exists(VECTOR_PATH):
     try:
-        with open(VECTOR_PATH, "rb") as f:
-            vectorstore = pickle.load(f)
-        print("Loaded vector_store.pkl")
-    except Exception as e:
-        print("Failed to load vector_store.pkl:", e)
-        vectorstore = None
+        from langchain.vectorstores import FAISS
+        from langchain.embeddings import OpenAIEmbeddings
+        OPENAI_EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+        try:
+            embeddings = OpenAIEmbeddings(model=OPENAI_EMBEDDING_MODEL)
+        except TypeError:
+            embeddings = OpenAIEmbeddings(model_name=OPENAI_EMBEDDING_MODEL)
+        # logging.debug(f"Using OpenAI embedding model: {OPENAI_EMBEDDING_MODEL}, embeddings type: {type(embeddings)}, embeddings: {embeddings}")
+        vectorstore = FAISS.load_local("vector_store", embeddings, allow_dangerous_deserialization=True)
+        print("Loaded vector_store/index.pkl using LangChain FAISS")
+    except ImportError as e:
+        print("LangChain not installed, fall back to pickle:", e)
+        try:
+            with open(VECTOR_PATH, "rb") as f:
+                loaded_obj = pickle.load(f)
+            logging.debug(f"Loaded vectorstore type: {type(loaded_obj)}")
+            if isinstance(loaded_obj, tuple):
+                vectorstore = loaded_obj[0]
+            else:
+                vectorstore = loaded_obj
+            print("Loaded vector_store/index.pkl")
+        except Exception as e:
+            print("Failed to load vector_store/index.pkl:", e)
+            vectorstore = None
 
 docs_cache = []
 if not vectorstore:
     # Load synthetic events for keyword-based retrieval
+    print("Using naive keyword retriever over synthetic_events.json")
     JSON_PATH = "synthetic_events.json"
     if os.path.exists(JSON_PATH):
         with open(JSON_PATH, "r") as f:
@@ -74,6 +95,7 @@ def get_system_prompt():
 class MessageRequest(BaseModel):
     session_id: str
     message: str
+    style: str
 
 class MessageResponse(BaseModel):
     reply: str
@@ -128,8 +150,10 @@ if USE_OPENAI:
 #     end_dt = dateparser.parse(end_time) if end_time else None
 
 @app.post("/v1/message", response_model=MessageResponse)
-def chat(msg: MessageRequest, style: str = Query("default")):
-
+def chat(msg: MessageRequest):
+    style = msg.style if msg.style in STYLE_MAP else "default"
+    logging.debug(f"Received message: {msg} with style: {style}")
+    logging.debug(f"Vectorstore available: {vectorstore is not None}, USE_OPENAI: {USE_OPENAI}")
     # Retrieve docs
     docs = None
     if vectorstore is not None:
@@ -142,6 +166,7 @@ def chat(msg: MessageRequest, style: str = Query("default")):
     else:
         docs = naive_retriever(msg.message)
 
+    logging.debug(f"Retrieved documents" + (f": {[d.page_content for d in docs]}" if docs else ": None"))
     context = [d.metadata for d in docs]
 
     # Compose response
@@ -152,13 +177,16 @@ def chat(msg: MessageRequest, style: str = Query("default")):
     else:
         user_prompt = None
 
+    logging.debug(f"User prompt: {user_prompt}")
+
+
     if USE_OPENAI and user_prompt is not None:
         try:
             style_file = STYLE_MAP.get(style, STYLE_MAP["concierge"])
             system_prompt = get_prompt("prompts/system.txt")
             style_prompt = get_prompt(style_file)
             fallback_prompt = get_prompt("prompts/fallback.txt")
-
+            
             messages = [
                 {
                     "role": "system",
@@ -167,8 +195,10 @@ def chat(msg: MessageRequest, style: str = Query("default")):
                 {"role": "user", "content": user_prompt},
             ]
 
-            # model="gpt-4o-mini"
-            model="gpt-5-mini"
+            logging.debug(f"Messages to OpenAI: {messages}")
+
+            model="gpt-4o-mini"
+            # model="gpt-5-mini"
             res = client.chat.completions.create(model=model,
                 messages=messages,
                 # max_tokens=400)
@@ -183,5 +213,8 @@ def chat(msg: MessageRequest, style: str = Query("default")):
         else:
             lines = [f"{i+1}. {d.page_content}" for i,d in enumerate(docs[:5])]
             answer = "Local results (no OpenAI key):\n" + "\n".join(lines)
+
+    logging.debug(f"Answer: {answer}")
+    logging.debug(f"Context: {context}")
 
     return MessageResponse(reply=answer, context=context)

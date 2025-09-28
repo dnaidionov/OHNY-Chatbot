@@ -5,7 +5,19 @@ const BACKEND_URL =
   (typeof process !== "undefined" && process.env && process.env.REACT_APP_BACKEND_URL) ||
   "http://localhost:8000";
 
+// Generate and persist a session id
+const generateSessionId = () => Date.now() + '-' + Math.floor(Math.random() * 10000);
+
 export default function Widget() {
+  // Add sessionId state: try to read from localStorage, or generate a new one
+  const [sessionId, setSessionId] = useState(() => {
+    const saved = localStorage.getItem("session_id");
+    if (saved) return saved;
+    const newId = generateSessionId();
+    localStorage.setItem("session_id", newId);
+    return newId;
+  });
+
   const [messages, setMessages] = useState([{ id: 1, role: "bot", text: "Hello! Ask me about OHNY Weekend." }]);
   const [input, setInput] = useState("");
   const [style, setStyle] = useState("default");
@@ -15,36 +27,45 @@ export default function Widget() {
   const messagesRef = useRef(null);
 
   const sendMessage = async () => {
-    if (!input) return;
-    // Always assign a unique id to user messages
-    const userMsg = { id: Date.now() + Math.random(), role: "user", text: input };
-    setMessages(m => [...m, userMsg]);
-    setInput("");
+    const trimmedInput = input.trim();
+    if (!trimmedInput || loading) return;
+
+    // Add user message
+    const userMessage = { id: Date.now(), role: "user", text: trimmedInput };
+    setMessages(prev => [...prev, userMessage]);
+    setInput(""); // Clear input
     setLoading(true);
 
-    // Don't send whitespace-only messages
-    if (!input.trim()) {
-      setLoading(false);
-      return;
-    }
-
     try {
-      const resp = await fetch(BACKEND_URL + "/v1/message", {
+      const resp = await fetch(`${BACKEND_URL}/v1/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: "demo", message: input, style: style })
+        // Include session_id in the POST body
+        body: JSON.stringify({ message: trimmedInput, style: style, session_id: sessionId })
       });
 
       if (!resp.ok) {
-        const text = await resp.text().catch(() => null);
-        setMessages(m => [...m, { id: Date.now() + Math.random(), role: "bot", text: `Server error: ${resp.status} ${text || resp.statusText}` }]);
-        return;
+        const errorText = await resp.text();
+        throw new Error(errorText || resp.statusText);
       }
 
       const data = await resp.json();
-      setMessages(m => [...m, { id: Date.now() + Math.random(), role: "bot", text: data.reply }]);
-    } catch (e) {
-      setMessages(m => [...m, { id: Date.now() + Math.random(), role: "bot", text: "Error: could not reach backend (is it running?)." }]);
+      console.log("Backend response:", data);
+      // Add bot message with unique id
+      const botMessage = { 
+        id: Date.now() + 1, 
+        role: "bot", 
+        text: data.reply || data.message || "No reply received"
+      };
+      setMessages(prev => [...prev, botMessage]);
+    } catch (error) {
+      // Add error message
+      const errorMessage = {
+        id: Date.now(),
+        role: "bot",
+        text: `Error: ${error.message || "Could not reach backend"}`
+      };
+      setMessages(prev => [...prev, errorMessage]);
     } finally {
       setLoading(false);
     }
@@ -85,7 +106,9 @@ export default function Widget() {
           style={{width: '100%', padding: 8, marginBottom: 8, boxSizing: 'border-box', resize: 'vertical'}}
         />
         <div style={{display:'flex', gap:8}}>
-          <button onClick={sendMessage} disabled={loading || !input.trim()} style={{flex:1, padding:10, background:'#0b5fff', color:'#fff', borderRadius:8}}>{loading? 'Thinking...':'Send'}</button>
+          <button onClick={sendMessage} disabled={loading || !input.trim()} style={{flex:1, padding:10, background:'#0b5fff', color:'#fff', borderRadius:8}}>
+            {loading ? 'Thinking...' : 'Send'}
+          </button>
         </div>
         <select aria-label="Response style" value={style} onChange={e => setStyle(e.target.value)}>
           <option value="default">Default</option>
@@ -94,7 +117,6 @@ export default function Widget() {
           <option value="friendly">Friendly & Helpful</option>
           <option value="family">Family-Friendly</option>
         </select>
-
       </div>
     </div>
   );

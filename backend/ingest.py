@@ -135,7 +135,7 @@ def build_vector_store(events):
     except Exception as e:
         print("Failed to import langchain/faiss:", e)
         return
-    texts = [e["title"] + ": " + e["description"] for e in events]
+    texts = [e["title"] + " \n Description: " + e["description"] + " \n Borough: " + e["borough"] + " \n Neighborhood: " + e["neighborhood"] + " \n Tags: " + ", ".join(e["tags"]) + " \n Accessible: " + str(e["accessibility"]) + " \n Kids-friendly: " + str(e["kid_friendly"]) + " \n Date: " + str(e["start_iso"]) for e in events]
     metadatas = [{"id": e["id"], "borough": e["borough"], "neighborhood": e["neighborhood"], "start": e["start_iso"], "end": e["end_iso"]} for e in events]
     try:
         # Instantiate embeddings with configurable model name. Different langchain wrappers
